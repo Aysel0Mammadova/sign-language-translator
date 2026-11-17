@@ -14,7 +14,6 @@ from sign_visualizer import ASLSignVisualizer
 # 1. Page Configuration
 st.set_page_config(
     page_title="AI Sign Language Translator (ASL)",
-    page_icon="🤟",
     layout="wide"
 )
 
@@ -112,7 +111,7 @@ def main():
         """
     )
 
-    st.title("🤟 AI-Based Text to Sign Language Translator (ASL)")
+    st.title("AI-Based Text to Sign Language Translator (ASL)")
 
     try:
         translator = load_translation_engine()

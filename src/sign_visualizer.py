@@ -38,22 +38,17 @@ class ASLSignVisualizer:
 
         # ASL grammatical indexing markers that represent spatial pointing, NOT spelled words
         # ASL grammatical indexing markers (both linguistic IX-* and ASLG-PC12 X-* notations)
+        # Unified ASLG-PC12 spatial pronoun indexing markers (never fingerspelled)
         self.grammatical_markers = {
-            "IX-1P": "Point to Self (Me / I)",
             "X-I": "Point to Self (I / Me)",
             "X-ME": "Point to Self (Me)",
             "X-MY": "Flat Hand on Chest (My / Mine)",
-            "IX-2P": "Point to Listener (You)",
             "X-YOU": "Point to Listener (You)",
             "X-YOUR": "Flat Hand Toward Listener (Your)",
-            "IX-3P": "Point to Side (He / She / It)",
             "X-HE": "Point to Side (He)",
             "X-SHE": "Point to Side (She)",
             "X-IT": "Point to Side (It)",
-            "IX-1P-PLURAL": "Sweeping Point (We / Us)",
             "X-WE": "Sweeping Point (We / Us)",
-            "IX-2P-PLURAL": "Sweeping Point (You All)",
-            "IX-3P-PLURAL": "Sweeping Point (They / Them)",
             "X-THEY": "Sweeping Point (They / Them)",
         }
 

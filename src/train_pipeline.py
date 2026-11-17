@@ -1,16 +1,11 @@
 import os
 import json
-import numpy as np
 import pandas as pd
-import tensorflow as tf
 from sklearn.model_selection import train_test_split
-from tensorflow.keras.layers import (
-    TextVectorization, Input, Embedding, LSTM, Bidirectional, Dense, Attention, Concatenate
-)
-from tensorflow.keras.models import Model
+from tensorflow.keras.layers import TextVectorization
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
+from model_builder import build_seq2seq_attention_model
 
-# 1. Configuration & Hyperparameters
 DATA_PATH = os.path.join("data", "processed_asl.csv")
 MODEL_DIR = "models"
 MAX_VOCAB_SIZE = 20000
@@ -21,84 +16,60 @@ BATCH_SIZE = 64
 EPOCHS = 25
 
 
-def build_seq2seq_attention_model(eng_vocab_size: int, asl_vocab_size: int) -> Model:
+def get_train_only_conversational_pairs() -> pd.DataFrame:
     """
-    Constructs a Bidirectional Encoder-Decoder LSTM architecture with Luong Attention.
+    Conversational English -> ASL Gloss pairs injected strictly into the training split
+    after splitting to avoid any data leakage into validation or test sets.
     """
-    # --- BIDIRECTIONAL ENCODER ---
-    encoder_inputs = Input(shape=(None,), dtype="int64", name="encoder_inputs")
-    encoder_emb = Embedding(
-        input_dim=eng_vocab_size,
-        output_dim=EMBEDDING_DIM,
-        mask_zero=True,
-        name="encoder_embedding"
-    )(encoder_inputs)
-
-    encoder_bilstm = Bidirectional(
-        LSTM(LATENT_DIM, return_sequences=True, return_state=True),
-        name="encoder_bilstm"
-    )
-    encoder_outputs, forward_h, forward_c, backward_h, backward_c = encoder_bilstm(encoder_emb)
-
-    # Concatenate forward and backward hidden/cell states
-    state_h = Concatenate(name="concat_state_h")([forward_h, backward_h])
-    state_c = Concatenate(name="concat_state_c")([forward_c, backward_c])
-    encoder_states = [state_h, state_c]
-
-    # --- DECODER (matches 2 * LATENT_DIM from Bidirectional Encoder) ---
-    decoder_inputs = Input(shape=(None,), dtype="int64", name="decoder_inputs")
-    decoder_emb = Embedding(
-        input_dim=asl_vocab_size,
-        output_dim=EMBEDDING_DIM,
-        mask_zero=True,
-        name="decoder_embedding"
-    )(decoder_inputs)
-
-    decoder_lstm = LSTM(
-        LATENT_DIM * 2,
-        return_sequences=True,
-        return_state=True,
-        name="decoder_lstm"
-    )
-    decoder_lstm_outputs, _, _ = decoder_lstm(
-        decoder_emb,
-        initial_state=encoder_states
-    )
-
-    # --- LUONG ATTENTION ---
-    attention_layer = Attention(name="attention_layer")
-    context_vector = attention_layer([decoder_lstm_outputs, encoder_outputs])
-
-    decoder_combined = Concatenate(axis=-1, name="concat_layer")(
-        [decoder_lstm_outputs, context_vector]
-    )
-
-    decoder_dense = Dense(asl_vocab_size, activation="softmax", name="decoder_dense")
-    decoder_outputs = decoder_dense(decoder_combined)
-
-    model = Model([encoder_inputs, decoder_inputs], decoder_outputs)
-    model.compile(
-        optimizer="adam",
-        loss="sparse_categorical_crossentropy",
-        metrics=["accuracy"]
-    )
-    return model
+    pairs = [
+        ("hello how are you", "HELLO HOW X-YOU"),
+        ("hello", "HELLO"),
+        ("good morning", "GOOD MORNING"),
+        ("good evening", "GOOD EVENING"),
+        ("what is your name", "X-YOU NAME WHAT"),
+        ("i am a student", "X-I STUDENT"),
+        ("i am a doctor", "X-I DOCTOR"),
+        ("she is a student", "X-SHE STUDENT"),
+        ("he is a teacher", "X-HE TEACHER"),
+        ("i study at university", "X-I STUDY UNIVERSITY"),
+        ("i am learning sign language", "X-I LEARN SIGN LANGUAGE"),
+        ("where do you live", "X-YOU LIVE WHERE"),
+        ("i live in baku", "X-I LIVE BAKU"),
+        ("i am going to school tomorrow", "TOMORROW X-I GO SCHOOL"),
+        ("i will travel tomorrow", "TOMORROW X-I WILL TRAVEL"),
+        ("where do you work", "X-YOU WORK WHERE"),
+        ("i need help please", "X-I NEED HELP PLEASE"),
+        ("thank you very much", "THANK-YOU VERY-MUCH"),
+        ("you are welcome", "X-YOU WELCOME"),
+        ("yes i understand", "YES X-I UNDERSTAND"),
+        ("no i do not understand", "NO X-I NOT UNDERSTAND"),
+    ]
+    rows = [
+        {"english": en, "gloss": f"<start> {gloss} <end>"}
+        for en, gloss in pairs * 15
+    ]
+    return pd.DataFrame(rows)
 
 
 def run_training():
     os.makedirs(MODEL_DIR, exist_ok=True)
 
-    df = pd.read_csv(DATA_PATH).dropna()
-    print(f"Loaded {len(df)} sentence pairs from {DATA_PATH}")
+    df = pd.read_csv(DATA_PATH).dropna().drop_duplicates(subset=["english"])
+    print(f"Loaded {len(df)} unique pairs from {DATA_PATH}")
 
-    # Split into Train (80%), Validation (10%), Test (10%)
+    # 1. Perform strict split FIRST (zero data leakage)
     train_df, temp_df = train_test_split(df, test_size=0.2, random_state=42)
     val_df, test_df = train_test_split(temp_df, test_size=0.5, random_state=42)
 
+    # Save untouched test split for honest evaluation
     test_df.to_csv(os.path.join("data", "test_split.csv"), index=False)
-    print(f"Split sizes -> Train: {len(train_df)}, Val: {len(val_df)}, Test: {len(test_df)}")
 
-    # Fit Vectorizers ONLY on Training Data
+    # 2. Augment ONLY the training set with conversational domain examples
+    conv_df = get_train_only_conversational_pairs()
+    train_df = pd.concat([train_df, conv_df], ignore_index=True).sample(frac=1.0, random_state=42)
+
+    print(f"Leak-free Split -> Train: {len(train_df)}, Val: {len(val_df)}, Test: {len(test_df)}")
+
     eng_vectorizer = TextVectorization(
         max_tokens=MAX_VOCAB_SIZE,
         output_mode="int",
@@ -130,33 +101,24 @@ def run_training():
     def prepare_tensors(dataframe):
         enc_in = eng_vectorizer(dataframe["english"].values)
         dec_full = asl_vectorizer(dataframe["gloss"].values)
-        dec_in = dec_full[:, :-1]
-        dec_target = dec_full[:, 1:]
-        return enc_in, dec_in, dec_target
+        return enc_in, dec_full[:, :-1], dec_full[:, 1:]
 
     X_train_enc, X_train_dec, y_train = prepare_tensors(train_df)
     X_val_enc, X_val_dec, y_val = prepare_tensors(val_df)
 
-    model = build_seq2seq_attention_model(len(eng_vocab), len(asl_vocab))
+    model = build_seq2seq_attention_model(
+        eng_vocab_size=len(eng_vocab),
+        asl_vocab_size=len(asl_vocab),
+        embedding_dim=EMBEDDING_DIM,
+        latent_dim=LATENT_DIM
+    )
 
     weights_path = os.path.join(MODEL_DIR, "asl_attention.weights.h5")
     callbacks = [
-        EarlyStopping(
-            monitor="val_loss",
-            patience=3,
-            restore_best_weights=True,
-            verbose=1
-        ),
-        ModelCheckpoint(
-            filepath=weights_path,
-            monitor="val_loss",
-            save_best_only=True,
-            save_weights_only=True,
-            verbose=1
-        )
+        EarlyStopping(monitor="val_loss", patience=3, restore_best_weights=True, verbose=1),
+        ModelCheckpoint(filepath=weights_path, monitor="val_loss", save_best_only=True, save_weights_only=True, verbose=1)
     ]
 
-    print("\nStarting training on Bidirectional Seq2Seq + Attention Model...")
     model.fit(
         [X_train_enc, X_train_dec],
         y_train,
@@ -165,7 +127,7 @@ def run_training():
         epochs=EPOCHS,
         callbacks=callbacks
     )
-    print(f"\nTraining complete! Best weights saved to '{weights_path}'.")
+    print(f"Training complete! Weights saved to '{weights_path}'.")
 
 
 if __name__ == "__main__":

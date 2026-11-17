@@ -4,9 +4,10 @@ from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
 from translator import ASLTranslator
 
 
-def evaluate_model(num_samples: int = 100):
+def evaluate_all_modes(num_samples: int = 200):
     """
-    Evaluates the trained ASLTranslator on unseen test data using BLEU-1 and BLEU-4 scores.
+    Compares Pure Neural, Pure Rule-Based, and Hybrid Neuro-Symbolic models
+    independently on the leak-free test split using BLEU-1 and BLEU-4.
     """
     test_path = os.path.join("data", "test_split.csv")
     test_df = pd.read_csv(test_path).dropna().head(num_samples)
@@ -14,44 +15,42 @@ def evaluate_model(num_samples: int = 100):
     translator = ASLTranslator()
     smoothie = SmoothingFunction().method1
 
-    bleu1_scores = []
-    bleu4_scores = []
+    results = {
+        "neural": {"b1": [], "b4": []},
+        "rule": {"b1": [], "b4": []},
+        "hybrid": {"b1": [], "b4": []},
+    }
 
-    print(f"Evaluating model on {len(test_df)} unseen test sentences...\n")
+    print(f"Evaluating 3 translation modes on {len(test_df)} unseen test sentences...\n")
 
-    for idx, row in test_df.iterrows():
+    for _, row in test_df.iterrows():
         en_text = row["english"]
-        # Remove <start> and <end> tags from ground-truth gloss
         true_gloss = row["gloss"].replace("<start>", "").replace("<end>", "").strip()
-        pred_gloss = translator.translate(en_text)
-
         ref_tokens = [true_gloss.split()]
-        hyp_tokens = pred_gloss.split()
 
-        # BLEU-1 measures unigram (word-level) accuracy
-        b1 = sentence_bleu(ref_tokens, hyp_tokens, weights=(1, 0, 0, 0), smoothing_function=smoothie)
-        # BLEU-4 measures phrase/sequence-level accuracy
-        b4 = sentence_bleu(ref_tokens, hyp_tokens, weights=(0.25, 0.25, 0.25, 0.25), smoothing_function=smoothie)
+        for mode in ["neural", "rule", "hybrid"]:
+            pred_gloss = translator.translate(en_text, mode=mode)
+            hyp_tokens = pred_gloss.split()
 
-        bleu1_scores.append(b1)
-        bleu4_scores.append(b4)
+            b1 = sentence_bleu(ref_tokens, hyp_tokens, weights=(1, 0, 0, 0), smoothing_function=smoothie)
+            b4 = sentence_bleu(ref_tokens, hyp_tokens, weights=(0.25, 0.25, 0.25, 0.25), smoothing_function=smoothie)
 
-        if idx < 5:
-            print(f"Sample {idx + 1}:")
-            print(f"  English   : {en_text}")
-            print(f"  True Gloss: {true_gloss}")
-            print(f"  Pred Gloss: {pred_gloss}")
-            print(f"  BLEU-1    : {b1:.4f}\n")
+            results[mode]["b1"].append(b1)
+            results[mode]["b4"].append(b4)
 
-    avg_bleu1 = sum(bleu1_scores) / len(bleu1_scores)
-    avg_bleu4 = sum(bleu4_scores) / len(bleu4_scores)
-
-    print("=" * 45)
-    print(f"Evaluation Summary ({len(test_df)} Test Samples):")
-    print(f"Average BLEU-1 Score (Word Accuracy) : {avg_bleu1:.4f}")
-    print(f"Average BLEU-4 Score (Sequence Match): {avg_bleu4:.4f}")
-    print("=" * 45)
+    print("=" * 60)
+    print(f"{'Model Variant':<25} | {'Avg BLEU-1':<12} | {'Avg BLEU-4':<12}")
+    print("-" * 60)
+    for mode, label in [
+        ("neural", "1. Pure Neural (Bi-LSTM)"),
+        ("rule", "2. Pure Rule-Based (spaCy)"),
+        ("hybrid", "3. Hybrid Neuro-Symbolic"),
+    ]:
+        avg_b1 = sum(results[mode]["b1"]) / len(results[mode]["b1"])
+        avg_b4 = sum(results[mode]["b4"]) / len(results[mode]["b4"])
+        print(f"{label:<25} | {avg_b1:<12.4f} | {avg_b4:<12.4f}")
+    print("=" * 60)
 
 
 if __name__ == "__main__":
-    evaluate_model(num_samples=100)
+    evaluate_all_modes(num_samples=200)

@@ -4,13 +4,11 @@ from typing import List, Dict, Optional, Tuple
 
 class ASLSignVisualizer:
     """
-    Production-ready 3-Tier Hybrid ASL Visual Mapper.
-
-    Architecture:
-      - Tier 1: Word-level dynamic ASL signs (MP4 or GIF) -> data/signs/videos/
-      - Tier 2: Word-level static ASL signs (PNG or JPG)  -> data/signs/words/
-      - Grammatical Markers (e.g., IX-1P, IX-2P)          -> data/signs/grammatical/ (never fingerspelled)
-      - Tier 3: Configurable Fingerspelling fallback      -> data/signs/alphabet/ (only if all letters exist)
+    Unified 3-Tier Hybrid ASL Visual Mapper (Standardized X-* Notation):
+      - Tier 1: Word-level dynamic ASL videos (MP4/GIF) -> data/signs/videos/
+      - Tier 2: Word-level static ASL images (PNG/JPG)  -> data/signs/words/
+      - Grammatical Markers (X-I, X-YOU, etc.)          -> data/signs/grammatical/ (with visual instruction fallback)
+      - Tier 3: Fingerspelling fallback                 -> data/signs/alphabet/ (only single-word tokens, never hyphenated compounds)
     """
 
     def __init__(
@@ -18,192 +16,115 @@ class ASLSignVisualizer:
         base_dir: str = os.path.join("data", "signs"),
         allow_fingerspelling: bool = True,
     ):
-        self.base_dir = base_dir
-        self.allow_fingerspelling = allow_fingerspelling
-
-        # Dedicated asset directories
         self.videos_dir = os.path.join(base_dir, "videos")
         self.words_dir = os.path.join(base_dir, "words")
         self.grammatical_dir = os.path.join(base_dir, "grammatical")
         self.alphabet_dir = os.path.join(base_dir, "alphabet")
+        self.allow_fingerspelling = allow_fingerspelling
 
-        # Ensure directory structure exists
-        for directory in [
-            self.videos_dir,
-            self.words_dir,
-            self.grammatical_dir,
-            self.alphabet_dir,
-        ]:
-            os.makedirs(directory, exist_ok=True)
+        for d in [self.videos_dir, self.words_dir, self.grammatical_dir, self.alphabet_dir]:
+            os.makedirs(d, exist_ok=True)
 
-        # ASL grammatical indexing markers that represent spatial pointing, NOT spelled words
-        # ASL grammatical indexing markers (both linguistic IX-* and ASLG-PC12 X-* notations)
-        # Unified ASLG-PC12 spatial pronoun indexing markers (never fingerspelled)
         self.grammatical_markers = {
-            "X-I": "Point to Self (I / Me)",
-            "X-ME": "Point to Self (Me)",
-            "X-MY": "Flat Hand on Chest (My / Mine)",
-            "X-YOU": "Point to Listener (You)",
-            "X-YOUR": "Flat Hand Toward Listener (Your)",
-            "X-HE": "Point to Side (He)",
-            "X-SHE": "Point to Side (She)",
-            "X-IT": "Point to Side (It)",
-            "X-WE": "Sweeping Point (We / Us)",
-            "X-THEY": "Sweeping Point (They / Them)",
+            "X-I": "Point Index Finger to Chest (I / Me)",
+            "X-ME": "Point Index Finger to Chest (Me)",
+            "X-MY": "Place Flat Hand on Chest (My / Mine)",
+            "X-YOU": "Point Index Finger Toward Listener (You)",
+            "X-YOUR": "Open Palm Toward Listener (Your)",
+            "X-HE": "Point Index Finger to Side (He)",
+            "X-SHE": "Point Index Finger to Side (She)",
+            "X-IT": "Point Index Finger to Side (It)",
+            "X-WE": "Arc Point Across Chest (We / Us)",
+            "X-THEY": "Sweeping Point to Side (They / Them)",
         }
 
-    def _find_media_asset(
-        self, directory: str, token: str, extensions: Tuple[str, ...]
-    ) -> Optional[Tuple[str, str]]:
-        """
-        Searches for a matching media file in the given directory across allowed extensions.
-        Returns (media_type, file_path) if found, otherwise None.
-        """
-        if not os.path.isdir(directory):
-            return None
-
-        for ext in extensions:
-            candidate_path = os.path.join(directory, f"{token}.{ext}")
-            if os.path.isfile(candidate_path):
-                media_type = self._classify_extension(ext)
-                return media_type, candidate_path
+    def _find_media(self, directory: str, token: str, exts: Tuple[str, ...]) -> Optional[Tuple[str, str]]:
+        for ext in exts:
+            path = os.path.join(directory, f"{token}.{ext}")
+            if os.path.isfile(path):
+                media_type = "video" if ext == "mp4" else ("gif" if ext == "gif" else "image")
+                return media_type, path
         return None
 
-    @staticmethod
-    def _classify_extension(ext: str) -> str:
-        """Maps file extensions to standardized media types."""
-        ext = ext.lower()
-        if ext == "mp4":
-            return "video"
-        if ext == "gif":
-            return "gif"
-        if ext in {"png", "jpg", "jpeg"}:
-            return "image"
-        return "missing"
-
-    def _handle_grammatical_marker(self, token: str) -> Dict[str, Optional[str]]:
-        """
-        Resolves ASL grammatical markers using dedicated video/GIF assets if available.
-        Never falls back to fingerspelling.
-        """
-        description = self.grammatical_markers[token]
-        asset = self._find_media_asset(
-            self.grammatical_dir, token, ("mp4", "gif", "png", "jpg", "jpeg")
-        )
-
-        if asset:
-            media_type, media_path = asset
-            return {
-                "gloss": token,
-                "visual_type": "grammatical_marker",
-                "media_type": media_type,
-                "media_path": media_path,
-                "label": f"{token} — {description}",
-            }
-
-        return {
-            "gloss": token,
-            "visual_type": "grammatical_marker",
-            "media_type": "missing",
-            "media_path": None,
-            "label": f"{token} — {description} (Asset Missing)",
-        }
-
     def _attempt_fingerspelling(self, token: str) -> Optional[List[Dict[str, Optional[str]]]]:
-        """
-        Attempts to spell out a token letter-by-letter using ASL alphabet images.
-        Succeeds ONLY if every alphabetic character in the token has a valid image file.
-        """
-        letters = [char for char in token if char.isalpha()]
-        if not letters:
+        # Never fingerspell hyphenated compound glosses (e.g., THANK-YOU) or grammatical prefixes
+        if "-" in token or not token.isalpha():
             return None
 
-        letter_assets = []
-        for char in letters:
-            asset = self._find_media_asset(self.alphabet_dir, char, ("png", "jpg", "jpeg"))
+        items = []
+        for char in token:
+            asset = self._find_media(self.alphabet_dir, char, ("png", "jpg", "jpeg"))
             if not asset:
-                # Abort fingerspelling if any single letter image is missing
                 return None
-            media_type, media_path = asset
-            letter_assets.append({
+            media_type, path = asset
+            items.append({
                 "gloss": token,
                 "visual_type": "fingerspelling",
                 "media_type": media_type,
-                "media_path": media_path,
+                "media_path": path,
                 "label": f"{token} ({char})",
             })
-
-        return letter_assets
+        return items
 
     def gloss_to_visuals(
         self, gloss_sequence: str, allow_fingerspelling: Optional[bool] = None
     ) -> List[Dict[str, Optional[str]]]:
-        """
-        Converts an ASL Gloss sequence into an ordered list of visual sign items.
-
-        Args:
-            gloss_sequence: Space-separated uppercase ASL gloss string (e.g., 'TOMORROW IX-1P GO BAKU').
-            allow_fingerspelling: Optional override for the instance's fallback policy.
-
-        Returns:
-            List of dictionaries preserving original Gloss token order.
-        """
-        if not gloss_sequence or not isinstance(gloss_sequence, str):
+        if not gloss_sequence:
             return []
 
-        use_fingerspelling = (
-            self.allow_fingerspelling
-            if allow_fingerspelling is None
-            else allow_fingerspelling
-        )
+        use_spelling = self.allow_fingerspelling if allow_fingerspelling is None else allow_fingerspelling
+        visual_sequence = []
 
-        tokens = gloss_sequence.strip().split()
-        visual_sequence: List[Dict[str, Optional[str]]] = []
-
-        for raw_token in tokens:
-            token = raw_token.upper().strip()
+        for raw_tok in gloss_sequence.strip().split():
+            token = raw_tok.upper().strip()
             if not token:
                 continue
 
-            # 1. Handle Grammatical Markers separately (never fingerspell)
+            # 1. Grammatical Spatial Markers
             if token in self.grammatical_markers:
-                visual_sequence.append(self._handle_grammatical_marker(token))
+                desc = self.grammatical_markers[token]
+                asset = self._find_media(self.grammatical_dir, token, ("mp4", "gif", "png"))
+                visual_sequence.append({
+                    "gloss": token,
+                    "visual_type": "grammatical_marker",
+                    "media_type": asset[0] if asset else "instruction_card",
+                    "media_path": asset[1] if asset else None,
+                    "label": f"{token}: {desc}",
+                })
                 continue
 
-            # 2. Tier 1: Word-level Dynamic ASL Videos (MP4 or GIF)
-            tier1_asset = self._find_media_asset(self.videos_dir, token, ("mp4", "gif"))
-            if tier1_asset:
-                media_type, media_path = tier1_asset
+            # 2. Tier 1: Dynamic Word Videos
+            t1 = self._find_media(self.videos_dir, token, ("mp4", "gif"))
+            if t1:
                 visual_sequence.append({
                     "gloss": token,
                     "visual_type": "tier1_dynamic_word",
-                    "media_type": media_type,
-                    "media_path": media_path,
+                    "media_type": t1[0],
+                    "media_path": t1[1],
                     "label": token,
                 })
                 continue
 
-            # 3. Tier 2: Word-level Static ASL Images (PNG or JPG)
-            tier2_asset = self._find_media_asset(self.words_dir, token, ("png", "jpg", "jpeg"))
-            if tier2_asset:
-                media_type, media_path = tier2_asset
+            # 3. Tier 2: Static Word Images
+            t2 = self._find_media(self.words_dir, token, ("png", "jpg", "jpeg"))
+            if t2:
                 visual_sequence.append({
                     "gloss": token,
                     "visual_type": "tier2_static_word",
-                    "media_type": media_type,
-                    "media_path": media_path,
+                    "media_type": t2[0],
+                    "media_path": t2[1],
                     "label": token,
                 })
                 continue
 
-            # 4. Tier 3: Configurable Fingerspelling Fallback (Atomic check)
-            if use_fingerspelling:
-                spelled_items = self._attempt_fingerspelling(token)
-                if spelled_items:
-                    visual_sequence.extend(spelled_items)
+            # 4. Tier 3: Fingerspelling Fallback (Single-word tokens only)
+            if use_spelling:
+                spelled = self._attempt_fingerspelling(token)
+                if spelled:
+                    visual_sequence.extend(spelled)
                     continue
 
-            # 5. Explicitly report missing ASL sign when no valid visual asset exists
+            # 5. Unmapped Token
             visual_sequence.append({
                 "gloss": token,
                 "visual_type": "unmapped_word",
@@ -216,13 +137,6 @@ class ASLSignVisualizer:
 
 
 if __name__ == "__main__":
-    visualizer = ASLSignVisualizer(allow_fingerspelling=True)
-    sample_gloss = "TOMORROW IX-1P GO BAKU"
-
-    print("=== Policy A: Fingerspelling ENABLED ===")
-    for item in visualizer.gloss_to_visuals(sample_gloss, allow_fingerspelling=True):
-        print(item)
-
-    print("\n=== Policy B: Fingerspelling DISABLED (Strict Dictionary Mode) ===")
-    for item in visualizer.gloss_to_visuals(sample_gloss, allow_fingerspelling=False):
+    vis = ASLSignVisualizer()
+    for item in vis.gloss_to_visuals("TOMORROW X-I TRAVEL BAKU"):
         print(item)

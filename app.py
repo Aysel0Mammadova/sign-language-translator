@@ -1,7 +1,6 @@
 import os
 import sys
 import tempfile
-import cv2
 import streamlit as st
 
 # Add 'src' directory to Python path
@@ -9,11 +8,13 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
 
 from translator import ASLTranslator
 from sign_visualizer import ASLSignVisualizer
+from video_stitcher import render_sequence_video
 
 
 # 1. Page Configuration
 st.set_page_config(
     page_title="AI Sign Language Translator (ASL)",
+    page_icon="🤟",
     layout="wide"
 )
 
@@ -22,46 +23,6 @@ st.set_page_config(
 @st.cache_resource
 def load_translation_engine():
     return ASLTranslator(model_dir="models")
-
-
-def stitch_sign_videos(visual_items: list) -> str:
-    """
-    Concatenates all available MP4 sign videos in the translated sequence
-    into a single continuous sentence video using OpenCV.
-    """
-    video_paths = [
-        item["media_path"]
-        for item in visual_items
-        if item["media_type"] == "video" and item["media_path"] and os.path.exists(item["media_path"])
-    ]
-
-    if len(video_paths) < 2:
-        return ""
-
-    target_size = (320, 240)
-    fps = 24.0
-    temp_out = os.path.join(tempfile.gettempdir(), "asl_combined_sentence.mp4")
-
-    fourcc = cv2.VideoWriter_fourcc(*"avc1")
-    writer = cv2.VideoWriter(temp_out, fourcc, fps, target_size)
-
-    # Fallback codec if avc1 is unavailable on the host OS
-    if not writer.isOpened():
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        writer = cv2.VideoWriter(temp_out, fourcc, fps, target_size)
-
-    for path in video_paths:
-        cap = cv2.VideoCapture(path)
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
-            resized_frame = cv2.resize(frame, target_size)
-            writer.write(resized_frame)
-        cap.release()
-
-    writer.release()
-    return temp_out if os.path.exists(temp_out) else ""
 
 
 def render_visual_card(col, item: dict):
@@ -104,14 +65,14 @@ def main():
     st.sidebar.subheader("Model & System Specs")
     st.sidebar.markdown(
         """
-        - **Architecture:** Bidirectional LSTM + Luong Attention
-        - **Guardrails:** Neuro-Symbolic `spaCy` Alignment
-        - **Corpus:** ASLG-PC12 + Conversational Domain
-        - **Visual Engine:** 3-Tier Hybrid Mapper + OpenCV Stitcher
+- **Architecture:** Bidirectional LSTM + Luong Attention
+- **Guardrails:** Neuro-Symbolic `spaCy` Alignment
+- **Corpus:** ASLG-PC12 + Conversational Domain
+- **Visual Engine:** 3-Tier Hybrid Mapper + H.264 Stitcher
         """
     )
 
-    st.title("AI-Based Text to Sign Language Translator (ASL)")
+    st.title("🤟 AI-Based Text to Sign Language Translator (ASL)")
 
     try:
         translator = load_translation_engine()
@@ -172,8 +133,12 @@ def main():
                 st.subheader("1. Intermediate Representation (ASL Gloss)")
                 st.code(gloss_output, language="text")
 
-                # Combined Sentence Video Player (when 2+ dynamic videos exist)
-                combined_video_path = stitch_sign_videos(visual_items)
+                # Combined Sentence Video Player (H.264 letterboxed + subtitled)
+                combined_video_path = render_sequence_video(
+                    visual_items,
+                    output_path=os.path.join(tempfile.gettempdir(), "asl_combined_sentence.mp4"),
+                    frame_size=(480, 368),
+                )
                 if combined_video_path:
                     st.subheader("2. Continuous Sign Sequence Player")
                     col_vid, _ = st.columns([1, 2])
@@ -199,8 +164,8 @@ def main():
         )
 
         m1, m2, m3 = st.columns(3)
-        m1.metric("Training Corpus Size", "35,000+ Pairs", "ASLG-PC12 + Domain")
-        m2.metric("Validation Accuracy", "~80.0%", "Bi-LSTM + Attention")
+        m1.metric("Conversational Exact Match", "75.0%", "Bi-LSTM + Attention")
+        m2.metric("Visual Sign Coverage", "89.2%", "Real-World Benchmark")
         m3.metric("Architecture Type", "Neuro-Symbolic", "TF + spaCy Guardrails")
 
         eda_chart_path = os.path.join("assets", "dataset_eda.png")

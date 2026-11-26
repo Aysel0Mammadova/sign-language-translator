@@ -46,7 +46,7 @@ class ASLTranslator:
             embedding_dim=embedding_dim,
             latent_dim=latent_dim
         )
-        self.model.load_weights(weights_path, skip_mismatch=True)
+        self.model.load_weights(weights_path)
         self.nlp = spacy.load("en_core_web_sm")
 
         # Unified pronoun mapping matching training pairs (e.g., your -> X-YOU)

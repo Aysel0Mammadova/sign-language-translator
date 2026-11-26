@@ -1,33 +1,33 @@
 import os
-import random
 import pandas as pd
 from nltk.translate.bleu_score import corpus_bleu, SmoothingFunction
 from translator import ASLTranslator
 from sign_visualizer import ASLSignVisualizer
 
 
-# Hand-crafted conversational benchmark (never present in ASLG-PC12 parliamentary corpus)
-MANUAL_CONVERSATIONAL_BENCHMARK = [
-    ("I will travel tomorrow", "TOMORROW X-I TRAVEL"),
-    ("What is your name", "X-YOU NAME WHAT"),
-    ("Where do you live", "X-YOU LIVE WHERE"),
-    ("Where do you work", "X-YOU WORK WHERE"),
-    ("I live in Baku", "X-I LIVE BAKU"),
-    ("I am a doctor", "X-I DOCTOR"),
-    ("I am a student", "X-I STUDENT"),
-    ("She is a teacher", "X-SHE TEACHER"),
-    ("He is reading a book now", "NOW X-HE READ BOOK"),
-    ("I need help please", "X-I NEED HELP PLEASE"),
-    ("Thank you very much", "THANK-YOU VERY-MUCH"),
-    ("Yes I understand", "YES X-I UNDERSTAND"),
-    ("No I do not understand", "NO X-I NOT UNDERSTAND"),
-    ("I am going to school tomorrow", "TOMORROW X-I GO SCHOOL"),
-    ("She bought a new car yesterday", "YESTERDAY X-SHE BUY NEW CAR"),
-    ("Good morning", "GOOD MORNING"),
-    ("Good evening", "GOOD EVENING"),
-    ("My friend works at a hospital", "X-I FRIEND WORK HOSPITAL"),
-    ("I study at university", "X-I STUDY UNIVERSITY"),
-    ("I am learning sign language", "X-I LEARN SIGN LANGUAGE"),
+# 100% Unseen Conversational Benchmark:
+# None of these sentences appear in train_pipeline.py's conversational augmentation set.
+UNSEEN_CONVERSATIONAL_BENCHMARK = [
+    ("Where do they live", "X-THEY LIVE WHERE"),
+    ("We are happy today", "TODAY X-WE HAPPY"),
+    ("My brother is a nurse", "X-I BROTHER NURSE"),
+    ("She will read a book tomorrow", "TOMORROW X-SHE READ BOOK"),
+    ("He works at a new school", "X-HE WORK NEW SCHOOL"),
+    ("Do you understand this problem", "X-YOU UNDERSTAND THIS PROBLEM"),
+    ("I bought a book yesterday", "YESTERDAY X-I BUY BOOK"),
+    ("They need help today", "TODAY X-THEY NEED HELP"),
+    ("Where is the hospital", "HOSPITAL WHERE"),
+    ("My friend is learning English", "X-I FRIEND LEARN ENGLISH"),
+    ("We will go to the university", "X-WE WILL GO UNIVERSITY"),
+    ("She does not like coffee", "X-SHE NOT LIKE COFFEE"),
+    ("What do you need", "X-YOU NEED WHAT"),
+    ("He is a good teacher", "X-HE GOOD TEACHER"),
+    ("I live in Ganja", "X-I LIVE GANJA"),
+    ("Tomorrow we will study together", "TOMORROW X-WE STUDY TOGETHER"),
+    ("Your friend helped me yesterday", "YESTERDAY X-YOU FRIEND HELP X-I"),
+    ("Why are you sad", "X-YOU SAD WHY"),
+    ("I want to learn sign language", "X-I WANT LEARN SIGN LANGUAGE"),
+    ("Good afternoon my friend", "GOOD AFTERNOON X-I FRIEND"),
 ]
 
 
@@ -53,11 +53,11 @@ def compute_wer(ref_tokens: list, hyp_tokens: list) -> float:
 
 def evaluate_benchmark(pairs: list, translator: ASLTranslator, visualizer: ASLSignVisualizer, title: str):
     smoothie = SmoothingFunction().method1
-    print(f"\n{'=' * 75}")
+    print(f"\n{'=' * 78}")
     print(f"BENCHMARK: {title} ({len(pairs)} sentences)")
-    print(f"{'=' * 75}")
-    print(f"{'Model Variant':<26} | {'Corpus BLEU':<11} | {'WER (↓)':<9} | {'Exact Match':<11} | {'Sign Coverage'}")
-    print("-" * 75)
+    print(f"{'=' * 78}")
+    print(f"{'Model Variant':<26} | {'Corpus BLEU':<11} | {'WER (↓)':<9} | {'Exact Match':<11} | {'Media Coverage'}")
+    print("-" * 78)
 
     for mode, label in [
         ("neural", "1. Pure Neural (Bi-LSTM)"),
@@ -68,7 +68,7 @@ def evaluate_benchmark(pairs: list, translator: ASLTranslator, visualizer: ASLSi
         hypotheses = []
         wers = []
         exact_matches = 0
-        mapped_tokens = 0
+        media_tokens = 0
         total_tokens = 0
 
         for en_text, true_gloss in pairs:
@@ -83,33 +83,33 @@ def evaluate_benchmark(pairs: list, translator: ASLTranslator, visualizer: ASLSi
             if ref_toks == hyp_toks:
                 exact_matches += 1
 
-            # Measure real visual sign coverage (excluding missing tokens)
+            # Count ONLY authentic video/image files (exclude text-only instruction cards)
             visuals = visualizer.gloss_to_visuals(pred_gloss, allow_fingerspelling=False)
             for v in visuals:
                 total_tokens += 1
-                if v["media_type"] != "missing":
-                    mapped_tokens += 1
+                if v["media_type"] in {"video", "gif", "image"}:
+                    media_tokens += 1
 
         c_bleu = corpus_bleu(references, hypotheses, smoothing_function=smoothie)
         avg_wer = sum(wers) / len(wers)
         exact_pct = (exact_matches / len(pairs)) * 100
-        coverage_pct = (mapped_tokens / total_tokens * 100) if total_tokens > 0 else 0.0
+        coverage_pct = (media_tokens / total_tokens * 100) if total_tokens > 0 else 0.0
 
-        print(f"{label:<26} | {c_bleu:<11.4f} | {avg_wer:<9.4f} | {exact_pct:>9.1f}% | {coverage_pct:>10.1f}%")
+        print(f"{label:<26} | {c_bleu:<11.4f} | {avg_wer:<9.4f} | {exact_pct:>9.1f}% | {coverage_pct:>11.1f}%")
 
 
 if __name__ == "__main__":
     translator = ASLTranslator()
     visualizer = ASLSignVisualizer()
 
-    # 1. Evaluate on Random Sample of ASLG-PC12 Test Split
+    # 1. Full ASLG-PC12 Test Split
     test_path = os.path.join("data", "test_split.csv")
-    test_df = pd.read_csv(test_path).dropna().sample(n=300, random_state=42)
+    test_df = pd.read_csv(test_path).dropna()
     aslg_pairs = [
         (row["english"], row["gloss"].replace("<start>", "").replace("<end>", "").strip())
         for _, row in test_df.iterrows()
     ]
-    evaluate_benchmark(aslg_pairs, translator, visualizer, "ASLG-PC12 Random Test Split")
+    evaluate_benchmark(aslg_pairs, translator, visualizer, "Full ASLG-PC12 Test Split")
 
-    # 2. Evaluate on Hand-Crafted Conversational Benchmark
-    evaluate_benchmark(MANUAL_CONVERSATIONAL_BENCHMARK, translator, visualizer, "Conversational Real-World Set")
+    # 2. 100% Unseen Hand-Crafted Conversational Benchmark
+    evaluate_benchmark(UNSEEN_CONVERSATIONAL_BENCHMARK, translator, visualizer, "Unseen Conversational Set")

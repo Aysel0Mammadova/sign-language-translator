@@ -107,7 +107,8 @@ if __name__ == "__main__":
     translator = ASLTranslator()
     visualizer = ASLSignVisualizer()
 
-    test_df = pd.read_csv(os.path.join("data", "test_split.csv")).dropna().sample(n=300, random_state=42)
+    raw_test = pd.read_csv(os.path.join("data", "test_split.csv")).dropna()
+    test_df = raw_test.sample(n=min(300, len(raw_test)), random_state=42)
     test_pairs = [
         (r["english"], r["gloss"].replace("<start>", "").replace("<end>", "").strip())
         for _, r in test_df.iterrows()

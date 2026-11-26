@@ -66,44 +66,53 @@ def render_sequence_video(
     card_duration_sec: float = 1.2,
 ) -> str:
     """
-    Combines dynamic videos, GIFs, static images, and grammatical instruction cards
-    into a browser-compatible H.264 MP4 video with aspect-ratio preservation.
+    Streams dynamic videos, GIFs, static images, and grammatical instruction cards
+    directly into a browser-compatible H.264 MP4 file without buffering all frames in RAM.
     """
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-    rgb_frames = []
+    frames_written = 0
 
-    for item in visual_items:
-        media_type = item.get("media_type")
-        media_path = item.get("media_path")
-        label = item.get("label", "")
+    with imageio.get_writer(output_path, fps=fps, codec="libx264", pixelformat="yuv420p") as writer:
+        for item in visual_items:
+            media_type = item.get("media_type")
+            media_path = item.get("media_path")
+            label = item.get("label", "")
 
-        if media_type == "instruction_card":
-            card_bgr = _create_instruction_card(label, frame_size)
-            card_rgb = cv2.cvtColor(card_bgr, cv2.COLOR_BGR2RGB)
-            for _ in range(int(fps * card_duration_sec)):
-                rgb_frames.append(card_rgb)
-
-        elif media_type in {"video", "gif"} and media_path and os.path.exists(media_path):
-            reader = imageio.get_reader(media_path)
-            for frame_rgb in reader:
-                frame_bgr = cv2.cvtColor(frame_rgb[:, :, :3], cv2.COLOR_RGB2BGR)
-                boxed = _letterbox_frame(frame_bgr, frame_size)
-                subtitled = _draw_semitransparent_subtitle(boxed, label)
-                rgb_frames.append(cv2.cvtColor(subtitled, cv2.COLOR_BGR2RGB))
-            reader.close()
-
-        elif media_type == "image" and media_path and os.path.exists(media_path):
-            img_bgr = cv2.imread(media_path)
-            if img_bgr is not None:
-                boxed = _letterbox_frame(img_bgr, frame_size)
-                subtitled = _draw_semitransparent_subtitle(boxed, label)
-                img_rgb = cv2.cvtColor(subtitled, cv2.COLOR_BGR2RGB)
+            if media_type == "instruction_card":
+                card_bgr = _create_instruction_card(label, frame_size)
+                card_rgb = cv2.cvtColor(card_bgr, cv2.COLOR_BGR2RGB)
                 for _ in range(int(fps * card_duration_sec)):
-                    rgb_frames.append(img_rgb)
+                    writer.append_data(card_rgb)
+                    frames_written += 1
 
-    if not rgb_frames:
+            elif media_type in {"video", "gif"} and media_path and os.path.exists(media_path):
+                try:
+                    reader = imageio.get_reader(media_path)
+                    for frame_rgb in reader:
+                        if frame_rgb is None or frame_rgb.size == 0:
+                            continue
+                        frame_bgr = cv2.cvtColor(frame_rgb[:, :, :3], cv2.COLOR_RGB2BGR)
+                        boxed = _letterbox_frame(frame_bgr, frame_size)
+                        subtitled = _draw_semitransparent_subtitle(boxed, label)
+                        writer.append_data(cv2.cvtColor(subtitled, cv2.COLOR_BGR2RGB))
+                        frames_written += 1
+                    reader.close()
+                except Exception as e:
+                    print(f"[WARNING] Failed to read media '{media_path}': {e}")
+
+            elif media_type == "image" and media_path and os.path.exists(media_path):
+                img_bgr = cv2.imread(media_path)
+                if img_bgr is not None and img_bgr.size > 0:
+                    boxed = _letterbox_frame(img_bgr, frame_size)
+                    subtitled = _draw_semitransparent_subtitle(boxed, label)
+                    img_rgb = cv2.cvtColor(subtitled, cv2.COLOR_BGR2RGB)
+                    for _ in range(int(fps * card_duration_sec)):
+                        writer.append_data(img_rgb)
+                        frames_written += 1
+
+    if frames_written == 0:
+        if os.path.exists(output_path):
+            os.remove(output_path)
         return ""
 
-    # Write H.264 (libx264) MP4 compatible with all web browsers and Streamlit
-    imageio.mimsave(output_path, rgb_frames, fps=fps, codec="libx264", pixelformat="yuv420p")
     return output_path

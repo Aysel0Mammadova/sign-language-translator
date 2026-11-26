@@ -127,7 +127,7 @@ def main():
                 st.warning("Please enter an English sentence first.")
             else:
                 with st.spinner("Translating and mapping visual signs..."):
-                    gloss_output = translator.translate(user_text)
+                    gloss_output = translator.translate(user_text, mode="hybrid")
                     visual_items = visualizer.gloss_to_visuals(gloss_output)
 
                 st.subheader("1. Intermediate Representation (ASL Gloss)")
@@ -164,9 +164,9 @@ def main():
         )
 
         m1, m2, m3 = st.columns(3)
-        m1.metric("Conversational Exact Match", "75.0%", "Bi-LSTM + Attention")
-        m2.metric("Visual Sign Coverage", "89.2%", "Real-World Benchmark")
-        m3.metric("Architecture Type", "Neuro-Symbolic", "TF + spaCy Guardrails")
+        m1.metric("ASLG-PC12 Test (Pure Neural)", "61.3% Exact Match", "0.8630 Corpus BLEU (n=300)")
+        m2.metric("Unseen Conversational (Rule-Based)", "70.0% Exact Match", "0.6238 Corpus BLEU (n=20)")
+        m3.metric("Hybrid Neuro-Symbolic", "44.7% / 35.0%", "In-Domain / Unseen Balance")
 
         eda_chart_path = os.path.join("assets", "dataset_eda.png")
         if os.path.exists(eda_chart_path):
@@ -174,6 +174,9 @@ def main():
         else:
             st.info("Run 'python notebooks/generate_report_charts.py' to generate EDA charts.")
 
+        multimodal_chart_path = os.path.join("assets", "multimodal_eda.png")
+        if os.path.exists(multimodal_chart_path):
+            st.image(multimodal_chart_path, caption="Multimodal Assets EDA: Alphabet Handshapes & Video Duration Distribution", width="stretch")
     # =========================================================================
     # TAB 3: SIGN VIDEO DICTIONARY
     # =========================================================================
